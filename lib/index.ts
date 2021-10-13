@@ -1,137 +1,152 @@
-import { readFileSync } from "fs";
-import { extract } from "tar";
-import { dirname, resolve } from "path";
 import { spawnSync } from "child_process";
+import { readFileSync } from "fs";
 import gunzip from "gunzip-maybe";
-import fetch from "node-fetch";
 
-import type { PackageJson } from "type-fest";
+import { dirname, resolve } from "path";
+import { extract } from "tar";
+import type { PackageJson as PackageJsonDefault } from "type-fest";
+import { fetch } from "./utils/fetch";
 
-const validateConfiguration = (
-  packageJson: PackageJson & { binary: { name: string; url: string } }
-) => {
-  if (!packageJson.version) return "'version' property must be specified";
+type ARCHType =
+  | "arm"
+  | "arm64"
+  | "ia32"
+  | "mips"
+  | "mipsel"
+  | "ppc"
+  | "ppc64"
+  | "s390"
+  | "s390x"
+  | "x32"
+  | "x64";
 
-  if (!packageJson.binary || typeof packageJson.binary !== "object")
-    return "'binary' property must be defined and be an object";
+type PlatformType =
+  | "aix"
+  | "darwin"
+  | "freebsd"
+  | "linux"
+  | "openbsd"
+  | "sunos"
+  | "win32";
 
-  if (!packageJson.binary.name) return "'name' property is necessary";
-
-  if (!packageJson.binary.url) return "'url' property is required";
-
-  return undefined;
+export type PackageJson = PackageJsonDefault & {
+  binary: { name: string; url: string };
 };
 
-const ARCH_MAPPING = {
+export type ArchMapperType = Partial<Record<ARCHType, string>>;
+export type PlatformMapperType = Partial<Record<PlatformType, string>>;
+
+export const GO_ARCH_MAPPING: ArchMapperType = {
   ia32: "386",
   x64: "amd64",
   arm: "arm",
 };
 
-const PLATFORM_MAPPING = {
+export const GO_PLATFORM_MAPPING: PlatformMapperType = {
   darwin: "darwin",
   linux: "linux",
   win32: "windows",
   freebsd: "freebsd",
 };
 
-function getPlatformMetadata() {
-  if (!(process.arch in ARCH_MAPPING))
-    throw new Error(
-      "Installation is not supported for this architecture: " + process.arch
+export class Binary {
+  constructor(
+    private readonly packageJson: PackageJson,
+    private readonly ARCH_MAPPING: ArchMapperType,
+    private readonly PLATFORM_MAPPING: PlatformMapperType,
+    private readonly DEBUG: boolean
+  ) {}
+
+  debug = (...args: Parameters<typeof console.log>) =>
+    this.DEBUG && console.log(...args);
+
+  getPlatformMetadata() {
+    if (!(process.arch in this.ARCH_MAPPING))
+      throw new Error(
+        "Installation is not supported for this architecture: " + process.arch
+      );
+
+    if (!(process.platform in this.PLATFORM_MAPPING))
+      throw new Error(
+        "Installation is not supported for this platform: " + process.platform
+      );
+
+    // Validate packagejson
+    if (!this.packageJson.version) throw "'version' property must be specified";
+    if (!this.packageJson.binary || typeof this.packageJson.binary !== "object")
+      throw "'binary' property must be defined and be an object";
+    if (!this.packageJson.binary.name) throw "'name' property is necessary";
+    if (!this.packageJson.binary.url) throw "'url' property is required";
+
+    let { name, url } = this.packageJson.binary;
+    let { version } = this.packageJson;
+    if (version[0] === "v") version = version.substr(1); // strip the 'v' if necessary v0.0.1 => 0.0.1
+
+    // Binary name on Windows has .exe suffix
+    if (process.platform === "win32") name += ".exe";
+
+    // Interpolate variables in URL, if necessary
+
+    const arch = process.arch as ARCHType;
+
+    const platform = process.platform as PlatformType;
+
+    url = url.replace(/{{arch}}/g, (this.ARCH_MAPPING as any)[arch]);
+    url = url.replace(
+      /{{platform}}/g,
+      (this.PLATFORM_MAPPING as any)[platform]
     );
+    url = url.replace(/{{version}}/g, version);
+    url = url.replace(/{{bin_name}}/g, name);
 
-  if (!(process.platform in PLATFORM_MAPPING))
-    throw new Error(
-      "Installation is not supported for this platform: " + process.platform
-    );
-
-  const packageJson = JSON.parse(
-    readFileSync(resolve(process.cwd(), "package.json")).toString()
-  );
-  const error = validateConfiguration(packageJson);
-  if (error && error.length > 0)
-    throw new Error("Invalid package.json: " + error);
-
-  // We have validated the config. It exists in all its glory
-
-  let { name, url } = packageJson.binary;
-  let { version } = packageJson;
-  if (version[0] === "v") version = version.substr(1); // strip the 'v' if necessary v0.0.1 => 0.0.1
-
-  // Binary name on Windows has .exe suffix
-  if (process.platform === "win32") name += ".exe";
-
-  // Interpolate variables in URL, if necessary
-
-  const arch = process.arch as
-    | "arm"
-    | "arm64"
-    | "ia32"
-    | "mips"
-    | "mipsel"
-    | "ppc"
-    | "ppc64"
-    | "s390"
-    | "s390x"
-    | "x32"
-    | "x64";
-
-  const platform = process.platform as
-    | "aix"
-    | "darwin"
-    | "freebsd"
-    | "linux"
-    | "openbsd"
-    | "sunos"
-    | "win32";
-  if (arch in ARCH_MAPPING) {
-  }
-  url = url.replace(/{{arch}}/g, (ARCH_MAPPING as any)[arch]);
-  url = url.replace(/{{platform}}/g, (PLATFORM_MAPPING as any)[platform]);
-  url = url.replace(/{{version}}/g, version);
-  url = url.replace(/{{bin_name}}/g, name);
-
-  return {
-    name,
-    url,
-  };
-}
-
-const download = async (url: string, installDirectory: string) => {
-  const res = await fetch(url);
-
-  return new Promise((resolve, reject) => {
-    if (res?.body)
-      res.body
-        .pipe(gunzip())
-        .pipe(extract({ cwd: installDirectory }))
-        .on("end", resolve)
-        .on("error", reject);
-    else reject("No data");
-  });
-};
-
-export const run = async () => {
-  try {
-    const { name, url } = getPlatformMetadata();
-    const [, binLocation, ...args] = process.argv;
-
-    const binFolder = dirname(binLocation);
-    await download(url, binFolder);
-
-    const options: Parameters<typeof spawnSync>[2] = {
-      cwd: process.cwd(),
-      stdio: "inherit",
+    return {
+      name,
+      url,
     };
-    const result = spawnSync(resolve(binFolder, name), args, options);
-
-    if (result.error) throw result.error;
-
-    process.exit(result?.status ?? 1);
-  } catch (error: unknown) {
-    const err = error instanceof Error ? error : new Error(`${error}`);
-    console.error(err.message);
-    process.exit(1);
   }
-};
+
+  private async download(name: string, url: string, installDirectory: string) {
+    this.debug(
+      `Downloading binary ${name} from ${url} into ${installDirectory}.`
+    );
+    const res = await fetch(url);
+
+    this.debug("Download complete.");
+    this.debug("Unpacking archive");
+    const result = await new Promise((resolve, reject) => {
+      if (res?.body)
+        res.body
+          .pipe(gunzip())
+          .pipe(extract({ cwd: installDirectory }, [name]))
+          .on("end", resolve)
+          .on("error", reject);
+      else reject("Download was empty");
+    });
+    this.debug("Archive unpacked");
+    return result;
+  }
+
+  public async run() {
+    try {
+      const { name, url } = this.getPlatformMetadata();
+      const [, binLocation, ...args] = process.argv;
+
+      const binFolder = dirname(binLocation);
+      await this.download(name, url, binFolder);
+
+      const options: Parameters<typeof spawnSync>[2] = {
+        cwd: process.cwd(),
+        stdio: "inherit",
+      };
+      const result = spawnSync(resolve(binFolder, name), args, options);
+
+      if (result.error) throw result.error;
+
+      process.exit(result?.status ?? 1);
+    } catch (error: unknown) {
+      const err = error instanceof Error ? error : new Error(`${error}`);
+      console.error(err.message);
+      process.exit(1);
+    }
+  }
+}
