@@ -17,9 +17,18 @@
     "node-fetch": "^3.0.0",
     "tar": "^6.1.11"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shkreios/binary-cli-install.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shkreios/binary-cli-install/issues"
+  },
+  "homepage": "https://github.com/shkreios/binary-cli-install#readme",
   "scripts": {
     "build": "rollup -c",
-    "watch": "rollup -c -w"
+    "watch": "rollup -c -w",
+    "prepublish": "yarn build"
   },
   "files": [
     "dist"
