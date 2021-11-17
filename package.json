@@ -14,6 +14,7 @@
   "typings": "dist/my-lib.d.ts",
   "dependencies": {
     "gunzip-maybe": "^1.4.2",
+    "type-fest": "^2.5.0",
     "node-fetch": "^3.0.0",
     "tar": "^6.1.11"
   },
@@ -40,7 +41,6 @@
     "rollup": "^2.58.0",
     "rollup-plugin-dts": "^4.0.0",
     "rollup-plugin-esbuild": "^4.5.0",
-    "type-fest": "^2.5.0",
     "typescript": "^4.4.4"
   }
 }
