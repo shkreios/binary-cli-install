@@ -40,6 +40,8 @@ export const GO_ARCH_MAPPING: ArchMapperType = {
   ia32: "386",
   x64: "amd64",
   arm: "arm",
+  arm64: "arm64",
+  x32: "amd64p32",
 };
 
 export const GO_PLATFORM_MAPPING: PlatformMapperType = {
